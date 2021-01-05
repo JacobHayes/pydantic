@@ -80,132 +80,70 @@ else:
     AnyCallable = TypingCallable[..., Any]
     NoArgAnyCallable = TypingCallable[[], Any]
 
-if sys.version_info < (3, 8):  # noqa: C901
-    if TYPE_CHECKING:
-        from typing_extensions import Literal
-    else:  # due to different mypy warnings raised during CI for python 3.7 and 3.8
-        try:
-            from typing_extensions import Literal
-        except ImportError:
-            Literal = None
+from typing_extensions import Annotated, Literal
 
-    if sys.version_info < (3, 7):
+if sys.version_info < (3, 7):
+    # py3.6 typing_extensions doesn't have get_args/get_origin, so we'll mock our own.
+    from typing_extensions import AnnotatedMeta as AnnotatedMeta
 
-        def get_args(t: Type[Any]) -> Tuple[Any, ...]:
-            """Simplest get_args compatability layer possible.
+    def typing_get_args(t: Type[Any]) -> Tuple[Any, ...]:
+        """Simplest get_args compatability layer possible.
 
-            The Python 3.6 typing module does not have `_GenericAlias` so
-            this won't work for everything. In particular this will not
-            support the `generics` module (we don't support generic models in
-            python 3.6).
+        The Python 3.6 typing module does not have `_GenericAlias` so
+        this won't work for everything. In particular this will not
+        support the `generics` module (we don't support generic models in
+        python 3.6).
 
-            """
-            return getattr(t, '__args__', ())
+        """
+        if isinstance(t, AnnotatedMeta):
+            return t.__args__ + t.__metadata__
+        return getattr(t, '__args__', ())
 
-    else:
-        from typing import _GenericAlias
-
-        def get_args(t: Type[Any]) -> Tuple[Any, ...]:
-            """Compatability version of get_args for python 3.7.
-
-            Mostly compatible with the python 3.8 `typing` module version
-            and able to handle almost all use cases.
-            """
-            if isinstance(t, _GenericAlias):
-                res = t.__args__
-                if t.__origin__ is Callable and res and res[0] is not Ellipsis:
-                    res = (list(res[:-1]), res[-1])
-                return res
-            return getattr(t, '__args__', ())
-
-    def get_origin(t: Type[Any]) -> Optional[Type[Any]]:
+    def typing_get_origin(t: Type[Any]) -> Optional[Type[Any]]:
+        if isinstance(t, AnnotatedMeta):
+            return Annotated
         return getattr(t, '__origin__', None)
 
 
 else:
-    from typing import Literal, get_args as typing_get_args, get_origin as typing_get_origin
-
-    def get_origin(tp: Type[Any]) -> Type[Any]:
-        """
-        We can't directly use `typing.get_origin` since we need a fallback to support
-        custom generic classes like `ConstrainedList`
-        It should be useless once https://github.com/cython/cython/issues/3537 is
-        solved and https://github.com/samuelcolvin/pydantic/pull/1753 is merged.
-        """
-        return typing_get_origin(tp) or getattr(tp, '__origin__', None)
-
-    def generic_get_args(tp: Type[Any]) -> Tuple[Any, ...]:
-        """
-        In python 3.9, `typing.Dict`, `typing.List`, ...
-        do have an empty `__args__` by default (instead of the generic ~T for example).
-        In order to still support `Dict` for example and consider it as `Dict[Any, Any]`,
-        we retrieve the `_nparams` value that tells us how many parameters it needs.
-        """
-        if hasattr(tp, '_nparams'):
-            return (Any,) * tp._nparams
-        return ()
-
-    def get_args(tp: Type[Any]) -> Tuple[Any, ...]:
-        """Get type arguments with all substitutions performed.
-
-        For unions, basic simplifications used by Union constructor are performed.
-        Examples::
-            get_args(Dict[str, int]) == (str, int)
-            get_args(int) == ()
-            get_args(Union[int, Union[T, int], str][int]) == (int, str)
-            get_args(Union[int, Tuple[T, int]][str]) == (int, Tuple[str, int])
-            get_args(Callable[[], T][int]) == ([], int)
-        """
-        # the fallback is needed for the same reasons as `get_origin` (see above)
-        return typing_get_args(tp) or getattr(tp, '__args__', ()) or generic_get_args(tp)
+    from typing_extensions import get_args as typing_get_args, get_origin as typing_get_origin
 
 
-if sys.version_info >= (3, 9):
-    from typing import Annotated
-else:
-    if TYPE_CHECKING:
-        from typing_extensions import Annotated, _AnnotatedAlias
-    else:  # due to different mypy warnings raised during CI for python 3.7 and 3.8
-        try:
-            from typing_extensions import Annotated
+def get_origin(tp: Type[Any]) -> Type[Any]:
+    """
+    We can't directly use `typing.get_origin` since we need a fallback to support
+    custom generic classes like `ConstrainedList`
+    It should be useless once https://github.com/cython/cython/issues/3537 is
+    solved and https://github.com/samuelcolvin/pydantic/pull/1753 is merged.
+    """
+    return typing_get_origin(tp) or getattr(tp, '__origin__', None)
 
-            try:
-                from typing_extensions import _AnnotatedAlias
-            except ImportError:
-                # py3.6 typing_extensions doesn't have _AnnotatedAlias, but has AnnotatedMeta, which
-                # will satisfy our `isinstance` checks.
-                from typing_extensions import AnnotatedMeta as _AnnotatedAlias
-        except ImportError:
-            # Create mock Annotated/_AnnotatedAlias values distinct from `None`, which is a valid
-            # `get_origin` return value.
-            class _FalseMeta(type):
-                # Allow short circuiting with "Annotated[...] if Annotated else None".
-                def __bool__(cls):
-                    return False
 
-                # Give a nice suggestion for unguarded use
-                def __getitem__(cls, key):
-                    raise RuntimeError('Annotated is not supported, please `pip install typing-extensions`.')
+def generic_get_args(tp: Type[Any]) -> Tuple[Any, ...]:
+    """
+    In python 3.9, `typing.Dict`, `typing.List`, ...
+    do have an empty `__args__` by default (instead of the generic ~T for example).
+    In order to still support `Dict` for example and consider it as `Dict[Any, Any]`,
+    we retrieve the `_nparams` value that tells us how many parameters it needs.
+    """
+    if hasattr(tp, '_nparams'):
+        return (Any,) * tp._nparams
+    return ()
 
-            class Annotated(metaclass=_FalseMeta):
-                pass
 
-            class _AnnotatedAlias(metaclass=_FalseMeta):
-                pass
+def get_args(tp: Type[Any]) -> Tuple[Any, ...]:
+    """Get type arguments with all substitutions performed.
 
-    # Our custom get_{args,origin} for <3.8 and the builtin 3.8 get_{args,origin} don't recognize
-    # typing_extensions.Annotated, so wrap them to short-circuit. We still want to use our wrapped
-    # get_origins defined above for non-Annotated data.
-
-    def get_args(tp: Type[Any], _get_args=get_args) -> Type[Any]:
-        if isinstance(tp, _AnnotatedAlias):
-            return tp.__args__ + tp.__metadata__
-        return _get_args(tp)
-
-    def get_origin(tp: Type[Any], _get_origin=get_origin) -> Type[Any]:
-        if isinstance(tp, _AnnotatedAlias):
-            return Annotated
-        return _get_origin(tp)
+    For unions, basic simplifications used by Union constructor are performed.
+    Examples::
+        get_args(Dict[str, int]) == (str, int)
+        get_args(int) == ()
+        get_args(Union[int, Union[T, int], str][int]) == (int, str)
+        get_args(Union[int, Tuple[T, int]][str]) == (int, Tuple[str, int])
+        get_args(Callable[[], T][int]) == ([], int)
+    """
+    # the fallback is needed for the same reasons as `get_origin` (see above)
+    return typing_get_args(tp) or getattr(tp, '__args__', ()) or generic_get_args(tp)
 
 
 if TYPE_CHECKING:

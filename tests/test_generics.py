@@ -792,7 +792,6 @@ def test_replace_types():
 
     assert replace_types(T, {T: int}) is int
     assert replace_types(List[Union[str, list, T]], {T: int}) == List[Union[str, list, int]]
-    assert replace_types(Callable, {T: int}) == Callable
     assert replace_types(Callable[[int, str, T], T], {T: int}) == Callable[[int, str, int], int]
     assert replace_types(T, {}) is T
     assert replace_types(Model[List[T]], {T: int}) == Model[List[T]][int]

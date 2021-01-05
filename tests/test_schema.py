@@ -1428,7 +1428,6 @@ def test_constraints_schema(kwargs, type_, expected_extra):
         ({'lt': 5}, bytes),
         ({'ge': 2}, str),
         ({'le': 5}, bool),
-        ({'gt': 0}, Callable),
         ({'gt': 0}, Callable[[int], int]),
         ({'gt': 0}, conlist(int, min_items=4)),
         ({'gt': 0}, conset(int, min_items=4)),
